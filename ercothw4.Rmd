@@ -1,0 +1,157 @@
+---
+title: "Analysis of Ercot Historical Load Data"
+author: "Daniel Pontoh"
+date: "3/2/2017"
+output:
+  html_document:
+    toc: true
+    code_download: true
+    theme: simplex
+    toc_float: true
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE, 
+  warning = FALSE
+)
+```
+
+# Visualizing the Data
+
+## Required Packages
+```{r}
+library(knitr)
+library(rvest)
+library(readxl)
+library(stringr)
+library(hrbrthemes)
+library(tidyverse)
+library(lubridate)
+```
+
+## Scraping the Web for Data
+```{r}
+pg <- read_html("http://www.ercot.com/gridinfo/load/load_hist")
+
+html_nodes(pg, "a") %>%
+  html_attr("href") %>%
+  grep(".xls", ., value = TRUE) %>%
+  grep("97", ., value = TRUE, invert = TRUE) %>%
+  sprintf("http://www.ercot.com%s", .) -> urls
+
+fils <- basename(urls)
+
+
+for(i in seq_along(urls)) {
+  print(i)
+  download.file(urls[i], fils[i], method = "wininet", mode = "wb")
+}
+
+list.files(pattern="ERCO") %>%
+  map_df(read_excel) -> ercot_df
+
+ercot_df
+```
+
+## Plotting the Data
+```{r}
+gather(ercot_df, region, mwh, -Hour_End) %>%
+  rename(ts=Hour_End) %>%
+  mutate(region=str_to_title(region),
+         region=ifelse(region == "Ercot", "ERCOT Overall", region),
+         region=str_replace(region, "_c", " Central"),
+         region=str_replace(region, "_west", " West"),
+         day=as.Date(ts),
+         year=as.character(lubridate::year(day))) %>%
+  ggplot(aes(x=year, y=mwh, group=year)) +
+  geom_violin(aes(fill=region)) +
+  scale_x_discrete(expand=c(0,0)) +
+  scale_y_continuous(label=scales::comma) +
+  ggthemes::scale_fill_tableau(palette="tableau10") +
+  facet_wrap(~region, scales="free_y") +
+  labs(x=NULL, y="megawatt hours",
+       title="ERCOT Regional Historical Grid Load Annual Distribution") +
+  theme_ipsum_rc(grid="Y") +
+  theme(legend.position="none")
+```
+
+# Analysis
+
+## What might have cause the uptick in the Far West starting around 2009/2010 and up until now.
+
+I believe that it's these factors:
+- increase in fracking equipment being plugged into the grid.
+- increase in population in West Texas region.
+
+From some browsing on the web, it seems that the uptick in load can be the result of a few different factors, all seemingly closely related.
+
+The first thing I found was that the cities of Odessa and Midland in West Texas were among the fastest growing cities in the nation. These two cities among many others in West Texas fell on the Permian Basin which had become a major target by energy companies for hydraulic fracturing (fracking). As more fracking sites sprung up in West Texas, more fracking equipment was
+being plugged into the grid. This has been reported to have had a major impact on energy demand and transmission in West Texas. Related to the increase in fracking sites, city population's began to grow rapidly. One article reports that 97% of apartments in towns and cities on the Permian Basin had become occupied which means more energy demands from those cities from businesses, services, home appliances, construction and more.
+
+1. http://urbanland.uli.org/infrastructure-transit/economics-underlying-book-texas/
+    - ctrl + f "Odessa" 
+2. https://www.texastribune.org/2014/08/25/west-texas-energy-bills-show-booms-unexpected-cost/
+    - see "Sucking up energy" section
+
+
+## Most frequent month for Min, Mean or Median and Max usage per region
+
+
+### Min
+```{r}
+gathered_df <- gather(ercot_df, region, mwh, -Hour_End)
+
+mutate(gathered_df, year = year(Hour_End), month = month(Hour_End)) %>%
+  group_by(region, year) %>%
+  filter(mwh == min(mwh)) %>%
+  ungroup() %>%
+  group_by(region) %>%
+  count(month) %>%
+  filter(n == max(n)) %>%
+  kable()
+```
+
+### Max
+```{r}
+mutate(gathered_df, year = year(Hour_End), month = month(Hour_End)) %>%
+  group_by(region, year) %>%
+  filter(mwh == max(mwh)) %>%
+  ungroup() %>%
+  group_by(region) %>%
+  count(month) %>%
+  filter(n == max(n)) %>%
+  kable()
+```
+
+### Mean
+```{r}
+mutate(gathered_df, year = year(Hour_End), month = month(Hour_End)) %>%
+  group_by(region, year, month) %>%
+  summarise(avg = mean(mwh)) %>%
+  ungroup() %>%
+  group_by(region, year) %>%
+  mutate(dif = avg - mean(avg)) %>%
+  filter(dif == min(dif)) %>%
+  ungroup() %>%
+  group_by(region) %>%
+  count(month) %>%
+  filter(n == max(n)) %>%
+  kable()
+```
+
+### Median
+```{r}
+mutate(gathered_df, year = year(Hour_End), month = month(Hour_End)) %>%
+  group_by(region, year, month) %>%
+  summarise(med = median(mwh)) %>%
+  ungroup() %>%
+  group_by(region, year) %>%
+  mutate(dif = med - median(med)) %>%
+  filter(dif == min(dif)) %>%
+  ungroup() %>%
+  group_by(region) %>%
+  count(month) %>%
+  filter(n == max(n)) %>%
+  kable()
+```
